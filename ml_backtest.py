@@ -1,0 +1,103 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+
+def load_data(filepath):
+    df = pd.read_csv(filepath)
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index('Date', inplace=True)
+    df.sort_index(inplace=True)
+    return df
+
+def calculate_metrics(returns, daily_rf=0.0):
+    if len(returns) == 0:
+        return {}
+    
+    total_return = (1 + returns).prod() - 1
+    days = (returns.index[-1] - returns.index[0]).days
+    cagr = (1 + total_return) ** (365.25 / days) - 1 if days > 0 else 0.0
+        
+    excess_returns = returns - daily_rf
+    sharpe = np.sqrt(252) * excess_returns.mean() / excess_returns.std() if excess_returns.std() > 0 else 0.0
+        
+    cum_returns = (1 + returns).cumprod()
+    rolling_max = cum_returns.cummax()
+    drawdowns = (cum_returns - rolling_max) / rolling_max
+    max_drawdown = drawdowns.min()
+    
+    return {
+        'CAGR': cagr,
+        'Sharpe': sharpe,
+        'Max Drawdown': max_drawdown
+    }
+
+def calc_rsi(series, period=4):
+    delta = series.diff()
+    up, down = delta.copy(), delta.copy()
+    up[up < 0] = 0
+    down[down > 0] = 0
+    roll_up = up.ewm(com=period-1, min_periods=period).mean()
+    roll_down = down.abs().ewm(com=period-1, min_periods=period).mean()
+    RS = roll_up / roll_down
+    return 100.0 - (100.0 / (1.0 + RS))
+
+def prepare_features(df):
+    df = df.copy()
+    df['Ret_1d'] = df['Close'].pct_change()
+    df['Ret_5d'] = df['Close'].pct_change(5)
+    df['Ret_21d'] = df['Close'].pct_change(21)
+    df['RSI'] = calc_rsi(df['Close'], 4)
+    df['SMA200_dist'] = df['Close'] / df['Close'].rolling(200).mean() - 1
+    df['Vol20'] = df['Ret_1d'].rolling(20).std() * np.sqrt(252)
+    df['Vol_dist'] = df['Vol20'] / df['Vol20'].rolling(200).mean() - 1
+    
+    # Target: Sign of next 5-day return
+    df['Target'] = (df['Close'].shift(-5) > df['Close']).astype(int)
+    
+    return df.dropna()
+
+def test_ml_strategy(df_all):
+    # Split into Train and Test
+    train_df = df_all[df_all.index < '2016-01-01'].copy()
+    test_df = df_all[df_all.index >= '2016-01-01'].copy()
+    
+    features = ['Ret_1d', 'Ret_5d', 'Ret_21d', 'RSI', 'SMA200_dist', 'Vol20', 'Vol_dist']
+    
+    # Train Model
+    model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    model.fit(train_df[features], train_df['Target'])
+    
+    # Predict (prob of positive return)
+    test_df['ML_Prob'] = model.predict_proba(test_df[features])[:, 1]
+    
+    # Strategy: Base Vol Scaling * ML Prob (scaled)
+    # Vol Scaling part
+    target_vol = 0.15
+    exposure_vol = target_vol / test_df['Vol20'].shift(1)
+    exposure_vol = exposure_vol.clip(upper=1.0).fillna(0)
+    
+    # ML Filter: Only stay in if ML_Prob > 0.5
+    ml_signal = (test_df['ML_Prob'].shift(1) > 0.5).astype(float)
+    
+    final_exposure = exposure_vol * ml_signal
+    
+    daily_returns = test_df['Ret_1d']
+    strategy_returns = final_exposure * daily_returns
+    
+    # Costs
+    transaction_cost = 0.0005
+    trades = final_exposure.diff().abs().fillna(0)
+    costs = trades * transaction_cost
+    
+    return strategy_returns - costs
+
+if __name__ == "__main__":
+    import warnings
+    warnings.filterwarnings('ignore')
+    
+    df = load_data("SP500_history_2000_to_current.csv")
+    df_feat = prepare_features(df)
+    
+    print("Machine Learning (Random Forest) + Vol Scaling")
+    returns_test = test_ml_strategy(df_feat)
+    print("Test Metrics:", calculate_metrics(returns_test))
