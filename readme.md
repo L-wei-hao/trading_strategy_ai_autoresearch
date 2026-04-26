@@ -190,7 +190,7 @@ Final_Exposure = (Weight_Comp1 * Comp1) + (Weight_Comp2 * Comp2)
 
 For a **$1,000,000 portfolio** invested at the start of 2016 and held through April 2026 (~10.3 years):
 
-![Growth of $1,000,000 (2016-Present)](C:\Users\Wei Hao\.gemini\antigravity\artifacts\performance_graph.png)
+![Growth of $1,000,000 (2016-Present)](performance_graph.png)
 
 | Scenario | Final Value (Apr 2026) | Max Drawdown $ | Avoided Loss vs B&H |
 |:---|:---:|:---:|:---:|
